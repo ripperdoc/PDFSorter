@@ -22,11 +22,16 @@ def debug(s):
 
 def uni_raw(s): #########################################################################
   """Helper function to print unicode chars in a string without encoding them"""
-  print s, len(s), type(s)
   l = []
   for c in s:
     l.append(hex(ord(c)))
-  print l, len(l)
+  print '    '.join(s), type(s)
+  print ' '.join(l)
+  print '    '.join([str(x) for x in range(len(l))])
+
+# /    U    s
+# 0x2f 0x55 0x73
+# 0    1    2
 
 # Important directories
 pdf_tempdir = "/temp/searchable"
@@ -90,7 +95,7 @@ date_bdy = r'[\D]('+months_reg+')( ?)([0-3]? ?\d)[, ]+('+pattern_year+')[\D]'
 
 # Some dates are likely to show up regularly in documents but not be the letter date,
 # such as the birth date. Add it to this list to not accept these as valid dates
-invalid_dates = [strptime('83-02-25','%y-%m-%d')]
+invalid_dates = [strptime('83-02-25','%y-%m-%d'), strptime('90-06-30','%y-%m-%d')]
 
 # Merge all regexps into one big
 regex_literal_date = re.compile(date_dby + "|" + date_bdy, re.I)
@@ -106,36 +111,27 @@ regex_our_date_prefix = re.compile(r'^((19|20)\d\d-[01]\d-[0-3]\d|no_date)_')
 # .. dir2
 # .. .. keyword2
 # etc
+pattern_keywords = r''
 keywords = {}
 for path, dirs, files in os.walk(unicode(pdf_sorted_dir)):
   ppath, parent = os.path.split(path)
   if ppath == pdf_sorted_dir: # parent is in the sort root, so list of dirs is keywords
-    # In OS X filenames, unicode is decomposed, meaning letter and diacritic is 
-    # separated. Below line will put them back together, e.g. a + ¨ = ä
-    keywords[parent] = [unicodedata.normalize('NFC',d) for d in dirs]
-
-default_prio = 3
-prios = {u'American Express':5, 'Skatteverket': 5, 'Nordea':2}
-    
-flat_p = ''
-patterns = []
-for k,vals in keywords.iteritems():
-  for val in vals:
-
-    if val in prios:
-      prio = prios[val]
-    else:
-      prio = default_prio
-    newk = os.path.join(pdf_sorted_dir, k, val)
-    val = val.replace(u' ','') #Remove spaces, as we will add arbitrary number of spaces below
-    # Make into unicode so that we can correctly put a space between each
-    # character - if not, we'd be putting space between each _byte_
-    p = ur'\s*'.join(val)
-    flat_p += p+'|'
-    patterns.append((re.compile(p, re.I | re.U),prio,newk))
-patterns = sorted(patterns, key=lambda pattern: pattern[1])
-print flat_p
-exit()
+    for d in dirs:
+      # We support naming a dir with an or sign "|" to direct multiple keywords to one dir
+      if '|' in d:
+        keys = d.split('|')
+      else:
+        keys = [d]
+      path = os.path.join(pdf_sorted_dir, parent, d)
+      for k in keys:
+        # Normalize keyword from directory name
+        # In OS X filenames, unicode is decomposed, meaning letter and diacritic is 
+        # separated. Below line will also put them back together, e.g. a + ¨ = ä
+        # so that we can properly match unicodes coming from PDF content
+        k = unicodedata.normalize('NFC',k).replace(u' ','').lower()
+        pattern_keywords += k+'|'
+        keywords[k] = path
+regex_keywords = re.compile('('+pattern_keywords[:-1]+')', re.U | re.I)
 
 # Parse input arguments
 parser = argparse.ArgumentParser(description="PDF sorters", version=0.1)
@@ -152,14 +148,22 @@ args = parser.parse_args()
 def main(argv): 
   """Run script"""
 
-  def which_matches(patterns, s): ########################################################
+  global debug_buffer
+  def match_keyword(s): ########################################################
     """Checks which of the patterns in provided dictionary that matches string s, return when matched"""
-    for pattern,_,key in patterns:
-      m = pattern.search(s)
-      debug("Match %s = %s" % (pattern.pattern,  m))
-      if m is not None:
-        return key
-    return None
+    s = s.replace(u' ','')
+    m = regex_keywords.search(s)
+    if m is not None:
+      key = m.group(0).lower()
+      debug("Matched %s using %s" % (key, regex_keywords.pattern))
+      if key in keywords:
+        return keywords[key]
+      else:
+        print "Found keyword %s but could not find a path for it" % m.group(0)
+        return None
+    else:
+      print "Could not find keyword"
+      return None
 
   def get_pdf_contents(pdffile): #########################################################
     """Reads out the text contents of provided PDF file"""
@@ -191,7 +195,7 @@ def main(argv):
     if contents == None:
       return None
     # Find which keyword matches the content (first match only)
-    keyword = which_matches(patterns, contents)
+    keyword = match_keyword(contents)
 
     date = "no_date"
     #In debug, show the date patterns used
@@ -320,11 +324,10 @@ def main(argv):
 
     contents = get_pdf_contents(ocrd_file)
     destination = parse_pdf(ocrd_file, fname, mod_time, contents)
-    
     if destination is None:
       out('Error: no text content in %s, ignoring' % ocrd_file)
     elif ocrd_file==destination:
-    	out('%s -> Already there' % ocrd_file) 
+      out('%s -> Already there' % ocrd_file) 
     else:
       # Pick a unique destination to avoid overwriting
       j=0
@@ -337,14 +340,14 @@ def main(argv):
       else:
         answer = 'y'
       if answer.startswith('y') and not args.debug:
-      	os.rename(ocrd_file,destination)
+        os.rename(ocrd_file,destination)
       elif answer.startswith('d'):
-      	print debug_buffer
-      	# TODO avoid repetition, create small function
-      	print '%s -> %s' % (ocrd_file, destination)
-      	answer = raw_input("Proceed? [y/n]")
-      	if answer.startswith('y') and not args.debug:
-      	  os.rename(ocrd_file,destination)
+        print debug_buffer
+        # TODO avoid repetition, create small function
+        print '%s -> %s' % (ocrd_file, destination)
+        answer = raw_input("Proceed? [y/n]")
+        if answer.startswith('y') and not args.debug:
+          os.rename(ocrd_file,destination)
     return
 
   # If first input is a dir, enumerate the pdf files in it (and ignore rest of input)
@@ -396,6 +399,7 @@ def main(argv):
           handlePdf(curfile, new_fname, ext, mod_time)
     else:
       handlePdf(curfile, fname, ext, mod_time)
+      debug_buffer = ''
   return
   
 if __name__ == '__main__': sys.exit(main(sys.argv))
