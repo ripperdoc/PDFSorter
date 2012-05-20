@@ -57,6 +57,12 @@ for m in all_months:
   months_set.add(pat)
 months_reg = r"|".join(months_set)
 
+#Allowed dates
+# %Y-%m-%d 1999-10-21 
+# %y-%m-%d 99-10-21 
+# %y-%m-%d 99-10-21 
+
+
 # For more accurate year regex recognition, we will only consider years between
 # 1970 and current year, as valid dates for scanned documents
 # Below pattern will automatically match up to current year, to make this future proof
